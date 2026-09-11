@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">Printly</string>
+
+    <string name="shortcut_passport_short">Passport Photo</string>
+    <string name="shortcut_passport_long">Start a Passport/ID Photo</string>
+    <string name="shortcut_photo_print_short">Photo Print</string>
+    <string name="shortcut_photo_print_long">Start a Photo Print</string>
+    <string name="shortcut_collage_short">Collage</string>
+    <string name="shortcut_collage_long">Start a Collage</string>
+    <string name="shortcut_label_short">Label</string>
+    <string name="shortcut_label_long">Start a Label</string>
+</resources>

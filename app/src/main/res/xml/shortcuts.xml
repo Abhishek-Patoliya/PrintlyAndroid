@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static App Shortcuts (long-press the launcher icon) — the Android
+     equivalent of Printly's 4 Siri Shortcuts/App Intents. Each deep-links
+     into MainActivity, which creates the same kind of new project
+     HomeViewModel's own quick actions would, then opens the editor. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="passport_photo"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_passport"
+        android:shortcutShortLabel="@string/shortcut_passport_short"
+        android:shortcutLongLabel="@string/shortcut_passport_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.a8000053398.printly"
+            android:targetClass="com.a8000053398.printly.MainActivity"
+            android:data="printly://new-project?type=passport" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="photo_print"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_photo"
+        android:shortcutShortLabel="@string/shortcut_photo_print_short"
+        android:shortcutLongLabel="@string/shortcut_photo_print_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.a8000053398.printly"
+            android:targetClass="com.a8000053398.printly.MainActivity"
+            android:data="printly://new-project?type=photo_print" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="collage"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_collage"
+        android:shortcutShortLabel="@string/shortcut_collage_short"
+        android:shortcutLongLabel="@string/shortcut_collage_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.a8000053398.printly"
+            android:targetClass="com.a8000053398.printly.MainActivity"
+            android:data="printly://new-project?type=collage" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="label"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_label"
+        android:shortcutShortLabel="@string/shortcut_label_short"
+        android:shortcutLongLabel="@string/shortcut_label_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.a8000053398.printly"
+            android:targetClass="com.a8000053398.printly.MainActivity"
+            android:data="printly://new-project?type=label" />
+    </shortcut>
+</shortcuts>

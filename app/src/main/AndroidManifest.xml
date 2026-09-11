@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Camera capture for "Take Photo" — matches iOS NSCameraUsageDescription. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- No READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE: photo selection goes through
+         the system Photo Picker (registerForActivityResult(PickVisualMedia)), which
+         needs no runtime permission on any supported API level — the closest, and
+         actually simpler, equivalent to iOS's PhotosPicker. -->
+
+    <application
+        android:name=".PrintlyApplication"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Printly">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Printly"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Deep links used by the launcher's static App Shortcuts (see
+                 shortcuts.xml) — the Android equivalent of Printly's 4 Siri
+                 Shortcuts/App Intents, since Android has no App Intents system
+                 and Assistant "App Actions" require Google review of built-in
+                 intents that don't map to a custom action like these. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="printly" android:host="new-project" />
+            </intent-filter>
+        </activity>
+
+        <meta-data
+            android:name="android.app.shortcuts"
+            android:resource="@xml/shortcuts" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
