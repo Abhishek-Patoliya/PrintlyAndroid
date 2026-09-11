@@ -6,7 +6,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,10 +17,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -28,27 +31,35 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.a8000053398.printly.model.PhotoItem
 import com.a8000053398.printly.ui.components.IconBadge
 import com.a8000053398.printly.ui.theme.IconMapping
 import com.a8000053398.printly.ui.theme.Metrics
 import com.a8000053398.printly.util.PrintlyConstants
 import com.a8000053398.printly.viewmodel.ProjectEditorViewModel
+import java.util.UUID
 
-/** Bottom sheet for managing the source photo list: add, delete, duplicate.
- * Kotlin/Compose port of iOS's `PhotosSheet` (drag-to-reorder is omitted —
- * see the QA notes for this platform difference). */
+/** Bottom sheet for managing the source photo list: add, delete, duplicate,
+ * and reorder (long-press the drag handle). Kotlin/Compose port of iOS's
+ * `PhotosSheet` — reordering is hold-the-handle-and-drag rather than iOS's
+ * Edit-mode list reordering, the more common Android pattern for this. */
 @Composable
 fun PhotosSheet(viewModel: ProjectEditorViewModel, onAddLabel: () -> Unit) {
     val context = LocalContext.current
@@ -88,11 +99,8 @@ fun PhotosSheet(viewModel: ProjectEditorViewModel, onAddLabel: () -> Unit) {
             Text("No Photos Yet — add photos from your library or camera to start arranging your page.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
         } else {
             Text("Photos (${viewModel.project.photos.size})", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyColumn(modifier = Modifier.fillMaxWidth().height((viewModel.project.photos.size * 76).coerceAtMost(420).dp)) {
-                items(viewModel.project.photos.sortedBy { it.sortIndex }, key = { it.id }) { photo ->
-                    PhotoRow(viewModel, photo)
-                }
-            }
+            Text("Hold the handle to reorder.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+            ReorderablePhotosList(viewModel)
         }
 
         if (viewModel.isImportingPhotos) {
@@ -122,34 +130,90 @@ private fun SourceRow(iconName: String, title: String, onClick: () -> Unit) {
     }
 }
 
+/** A manually-driven reorderable list: dragging a row's handle accumulates a
+ * pixel offset and, each time it crosses half a row's height, swaps that row
+ * with its neighbor via `viewModel.movePhotos` and compensates the offset by
+ * one row height — the standard technique for a reorderable `LazyColumn`
+ * without a third-party dependency. */
 @Composable
-private fun PhotoRow(viewModel: ProjectEditorViewModel, photo: PhotoItem) {
-    val bitmap = remember(photo.id, viewModel.project) { viewModel.resolvedImage(photo) }
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Metrics.spacingM.dp)
-    ) {
-        if (bitmap != null) {
-            Image(bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(Metrics.radiusSmall.dp)))
-        } else {
-            androidx.compose.foundation.layout.Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(Metrics.radiusSmall.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text("${photo.copies} ${if (photo.copies == 1) "copy" else "copies"}", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { viewModel.setCopies((photo.copies - 1).coerceAtLeast(0), photo) }) { Text("−") }
-                IconButton(onClick = { viewModel.setCopies((photo.copies + 1).coerceAtMost(PrintlyConstants.MAX_COPIES), photo) }) { Text("+") }
+private fun ReorderablePhotosList(viewModel: ProjectEditorViewModel) {
+    val sortedPhotos = viewModel.project.photos.sortedBy { it.sortIndex }
+    var draggedID by remember { mutableStateOf<UUID?>(null) }
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+    var rowHeightPx by remember { mutableFloatStateOf(0f) }
+
+    LazyColumn(modifier = Modifier.fillMaxWidth().height((sortedPhotos.size * 76).coerceAtMost(420).dp)) {
+        itemsIndexed(sortedPhotos, key = { _, item -> item.id }) { _, photo ->
+            val isDragged = draggedID == photo.id
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { if (rowHeightPx <= 0f) rowHeightPx = it.size.height.toFloat() }
+                    .zIndex(if (isDragged) 1f else 0f)
+                    .graphicsLayer { translationY = if (isDragged) dragOffsetPx else 0f }
+                    .then(if (isDragged) Modifier.shadow(4.dp) else Modifier)
+                    .background(if (isDragged) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface)
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Metrics.spacingM.dp)
+            ) {
+                val bitmap = remember(photo.id, viewModel.project) { viewModel.resolvedImage(photo) }
+                if (bitmap != null) {
+                    Image(bitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.size(52.dp).clip(RoundedCornerShape(Metrics.radiusSmall.dp)))
+                } else {
+                    Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(Metrics.radiusSmall.dp)).background(MaterialTheme.colorScheme.surfaceVariant))
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("${photo.copies} ${if (photo.copies == 1) "copy" else "copies"}", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { viewModel.setCopies((photo.copies - 1).coerceAtLeast(0), photo) }) { Text("−") }
+                        IconButton(onClick = { viewModel.setCopies((photo.copies + 1).coerceAtMost(PrintlyConstants.MAX_COPIES), photo) }) { Text("+") }
+                    }
+                    viewModel.qualityWarning(photo)?.let {
+                        Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                IconButton(onClick = { viewModel.duplicatePhoto(photo) }) {
+                    Icon(IconMapping.icon("plus.square.on.square"), contentDescription = "Duplicate", tint = MaterialTheme.colorScheme.primary)
+                }
+                IconButton(onClick = { viewModel.deletePhoto(photo) }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                }
+                Icon(
+                    Icons.Filled.DragHandle,
+                    contentDescription = "Reorder",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(start = 2.dp)
+                        .pointerInput(photo.id) {
+                            var localIndex = -1
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = {
+                                    draggedID = photo.id
+                                    dragOffsetPx = 0f
+                                    localIndex = viewModel.project.photos.sortedBy { it.sortIndex }.indexOfFirst { it.id == photo.id }
+                                },
+                                onDragEnd = { draggedID = null; dragOffsetPx = 0f },
+                                onDragCancel = { draggedID = null; dragOffsetPx = 0f }
+                            ) { change, dragAmount ->
+                                change.consume()
+                                dragOffsetPx += dragAmount.y
+                                val rowHeight = rowHeightPx
+                                if (rowHeight <= 0f || localIndex < 0) return@detectDragGesturesAfterLongPress
+                                val current = viewModel.project.photos
+                                if (dragOffsetPx > rowHeight / 2 && localIndex < current.size - 1) {
+                                    viewModel.movePhotos(localIndex, localIndex + 1)
+                                    localIndex += 1
+                                    dragOffsetPx -= rowHeight
+                                } else if (dragOffsetPx < -rowHeight / 2 && localIndex > 0) {
+                                    viewModel.movePhotos(localIndex, localIndex - 1)
+                                    localIndex -= 1
+                                    dragOffsetPx += rowHeight
+                                }
+                            }
+                        }
+                )
             }
-            viewModel.qualityWarning(photo)?.let {
-                Text(it, fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
-            }
-        }
-        IconButton(onClick = { viewModel.duplicatePhoto(photo) }) {
-            Icon(IconMapping.icon("plus.square.on.square"), contentDescription = "Duplicate", tint = MaterialTheme.colorScheme.primary)
-        }
-        IconButton(onClick = { viewModel.deletePhoto(photo) }) {
-            Icon(Icons.Filled.Delete, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
         }
     }
 }
