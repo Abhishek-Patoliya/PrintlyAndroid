@@ -2,6 +2,9 @@
 package com.a8000053398.printly.ui.export
 
 import android.content.Intent
+import android.provider.DocumentsContract
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -57,6 +60,63 @@ fun ExportScreen(viewModel: ProjectEditorViewModel, onClose: () -> Unit) {
     var exportDPI by remember { mutableStateOf(PrintlyConstants.RECOMMENDED_DPI) }
     val context = LocalContext.current
     var printUnavailableAlert by remember { mutableStateOf(false) }
+    var savedToFilesConfirmation by remember { mutableStateOf(false) }
+    var saveToFilesError by remember { mutableStateOf<String?>(null) }
+
+    // Multi-page JPG/PNG exports need a whole folder (SAF can only create one
+    // document per `CreateDocument` launch), so a tree pick stashes which
+    // files/format to write once the user has chosen a destination folder.
+    var pendingTreeSaveFiles by remember { mutableStateOf<List<java.io.File>>(emptyList()) }
+    var pendingTreeSaveFormat by remember { mutableStateOf<ExportFormat?>(null) }
+
+    val createDocumentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri != null) {
+            val sourceFile = if (format == ExportFormat.PDF) viewModel.exportedPDFFile else viewModel.exportedImageFiles.firstOrNull()
+            if (sourceFile != null) {
+                val success = runCatching {
+                    context.contentResolver.openOutputStream(uri)?.use { out -> sourceFile.inputStream().use { it.copyTo(out) } }
+                        ?: error("no output stream")
+                }.isSuccess
+                if (success) savedToFilesConfirmation = true else saveToFilesError = "Couldn't save the file to that location."
+            }
+        }
+    }
+
+    val openTreeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { treeUri ->
+        if (treeUri != null) {
+            val fmt = pendingTreeSaveFormat
+            val files = pendingTreeSaveFiles
+            if (fmt != null && files.isNotEmpty()) {
+                val success = runCatching {
+                    val parentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, DocumentsContract.getTreeDocumentId(treeUri))
+                    for (file in files) {
+                        val newDocUri = DocumentsContract.createDocument(context.contentResolver, parentUri, mimeTypeFor(fmt), file.name)
+                            ?: continue
+                        context.contentResolver.openOutputStream(newDocUri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                    }
+                }.isSuccess
+                if (success) savedToFilesConfirmation = true else saveToFilesError = "Couldn't save the files to that folder."
+            }
+            pendingTreeSaveFiles = emptyList()
+            pendingTreeSaveFormat = null
+        }
+    }
+
+    fun saveToFiles() {
+        val baseName = viewModel.project.name.trim().ifEmpty { "Printly" }
+        if (format == ExportFormat.PDF) {
+            createDocumentLauncher.launch("$baseName.${extensionFor(format)}")
+        } else {
+            val files = viewModel.exportedImageFiles
+            if (files.size <= 1) {
+                createDocumentLauncher.launch("$baseName.${extensionFor(format)}")
+            } else {
+                pendingTreeSaveFiles = files
+                pendingTreeSaveFormat = format
+                openTreeLauncher.launch(null)
+            }
+        }
+    }
 
     val hasOutput = if (format == ExportFormat.PDF) viewModel.exportedPDFFile != null else viewModel.exportedImageFiles.isNotEmpty()
 
@@ -152,7 +212,7 @@ fun ExportScreen(viewModel: ProjectEditorViewModel, onClose: () -> Unit) {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(Metrics.spacingM.dp)) {
                     SecondaryButton("Share", modifier = Modifier.weight(1f), onClick = { shareExport(context, viewModel, format) })
-                    SecondaryButton("Save to Files", modifier = Modifier.weight(1f), onClick = { saveExportToFiles(context, viewModel, format) })
+                    SecondaryButton("Save to Files", modifier = Modifier.weight(1f), onClick = { saveToFiles() })
                 }
             }
         }
@@ -172,6 +232,21 @@ fun ExportScreen(viewModel: ProjectEditorViewModel, onClose: () -> Unit) {
             title = { Text("Printing Unavailable") },
             text = { Text("This device can't print this file directly. Use Share instead to send it to a printing app.") },
             confirmButton = { TextButton(onClick = { printUnavailableAlert = false }) { Text("OK") } }
+        )
+    }
+    if (savedToFilesConfirmation) {
+        AlertDialog(
+            onDismissRequest = { savedToFilesConfirmation = false },
+            title = { Text("Saved to Files") },
+            confirmButton = { TextButton(onClick = { savedToFilesConfirmation = false }) { Text("OK") } }
+        )
+    }
+    if (saveToFilesError != null) {
+        AlertDialog(
+            onDismissRequest = { saveToFilesError = null },
+            title = { Text("Couldn't Save") },
+            text = { Text(saveToFilesError ?: "") },
+            confirmButton = { TextButton(onClick = { saveToFilesError = null }) { Text("OK") } }
         )
     }
 }
@@ -218,9 +293,14 @@ private fun shareExport(context: android.content.Context, viewModel: ProjectEdit
     context.startActivity(Intent.createChooser(intent, "Share"))
 }
 
-private fun saveExportToFiles(context: android.content.Context, viewModel: ProjectEditorViewModel, format: ExportFormat) {
-    // Android's Storage Access Framework requires an Activity result callback per
-    // file; sharing (above) is the primary path here, matching what most users
-    // reach for. A dedicated "Save to Files" picker is a reasonable follow-up.
-    shareExport(context, viewModel, format)
+private fun mimeTypeFor(format: ExportFormat): String = when (format) {
+    ExportFormat.PDF -> "application/pdf"
+    ExportFormat.JPG -> "image/jpeg"
+    ExportFormat.PNG -> "image/png"
+}
+
+private fun extensionFor(format: ExportFormat): String = when (format) {
+    ExportFormat.PDF -> "pdf"
+    ExportFormat.JPG -> "jpg"
+    ExportFormat.PNG -> "png"
 }
